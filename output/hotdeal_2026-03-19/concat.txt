@@ -1,6 +1,0 @@
-file '/Users/root1/hotdeal-radar/output/hotdeal_2026-03-19/clip_intro.mp4'
-file '/Users/root1/hotdeal-radar/output/hotdeal_2026-03-19/clip_0.mp4'
-file '/Users/root1/hotdeal-radar/output/hotdeal_2026-03-19/clip_1.mp4'
-file '/Users/root1/hotdeal-radar/output/hotdeal_2026-03-19/clip_2.mp4'
-file '/Users/root1/hotdeal-radar/output/hotdeal_2026-03-19/clip_3.mp4'
-file '/Users/root1/hotdeal-radar/output/hotdeal_2026-03-19/clip_outro.mp4'
