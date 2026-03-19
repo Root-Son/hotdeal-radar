@@ -7,7 +7,8 @@ import { verifyDeals } from "@/lib/verifier";
 export async function GET() {
   try {
     // 1. 뽐뿌 + 에펨코리아 동시 크롤링
-    let ppomppuDeals, fmkoreaDeals;
+    let ppomppuDeals: Awaited<ReturnType<typeof crawlPpomppu>>;
+    let fmkoreaDeals: Awaited<ReturnType<typeof crawlFmkorea>>;
     try {
       ppomppuDeals = await crawlPpomppu(1);
     } catch (e) {

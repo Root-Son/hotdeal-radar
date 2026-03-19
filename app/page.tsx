@@ -1,64 +1,121 @@
-import Image from "next/image";
+import { VerifiedDeal } from "@/lib/types";
+import { crawlPpomppu } from "@/lib/crawlers";
+import { verifyDeals } from "@/lib/verifier";
+import { toAffiliateLink, extractProductUrl } from "@/lib/affiliate";
 
-export default function Home() {
+export const revalidate = 600; // 10분마다 갱신
+
+async function getDeals(): Promise<(VerifiedDeal & { affiliateLink: string; productImage?: string })[]> {
+  const raw = await crawlPpomppu(2);
+  const verified = await verifyDeals(raw, 20);
+
+  const results = [];
+  for (const deal of verified) {
+    let productUrl: string | null = null;
+    try { productUrl = await extractProductUrl(deal.link); } catch {}
+    const affiliate = productUrl ? toAffiliateLink(productUrl) : null;
+
+    let productImage: string | undefined;
+    try {
+      const cId = process.env.NAVER_CLIENT_ID;
+      const cSec = process.env.NAVER_CLIENT_SECRET;
+      if (cId && cSec) {
+        const q = deal.title.replace(/\([\d,]+원[^)]*\)/g, "").trim().slice(0, 30);
+        const res = await fetch(
+          `https://openapi.naver.com/v1/search/shop.json?query=${encodeURIComponent(q)}&display=1&sort=sim`,
+          { headers: { "X-Naver-Client-Id": cId, "X-Naver-Client-Secret": cSec }, cache: "no-store" }
+        );
+        if (res.ok) {
+          const data = await res.json();
+          productImage = data.items?.[0]?.image || undefined;
+        }
+      }
+    } catch {}
+
+    results.push({ ...deal, affiliateLink: affiliate || productUrl || deal.link, productImage });
+  }
+  return results;
+}
+
+function Badge({ rate }: { rate: number }) {
+  if (rate >= 40) return <span className="px-2.5 py-1 rounded-full bg-red-500/90 text-white text-[11px] font-bold">🚨 역대 최저가</span>;
+  if (rate >= 25) return <span className="px-2.5 py-1 rounded-full bg-orange-500/90 text-white text-[11px] font-bold">🔥 30일 최저가</span>;
+  return <span className="px-2.5 py-1 rounded-full bg-emerald-600/90 text-white text-[11px] font-bold">⚡ 최저가</span>;
+}
+
+export default async function Home() {
+  const deals = await getDeals();
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    <div className="min-h-screen">
+      <header className="border-b border-white/10 sticky top-0 bg-[#0a0a0a]/90 backdrop-blur-md z-50">
+        <div className="max-w-2xl mx-auto px-4 py-4 flex items-center justify-between">
+          <div>
+            <h1 className="text-xl font-black tracking-tight">매일줍줍</h1>
+            <p className="text-[11px] text-white/40">안 사면 손해인 것만 모았습니다</p>
+          </div>
+          <div className="text-[11px] text-white/25">
+            {new Date().toLocaleDateString("ko-KR", { month: "long", day: "numeric" })}
+          </div>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
+      </header>
+
+      <main className="max-w-2xl mx-auto px-4 py-5">
+        {deals.length === 0 ? (
+          <div className="text-center py-20 text-white/30">
+            <p className="text-4xl mb-4">🔍</p>
+            <p>핫딜을 수집하고 있어요...</p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {deals.map((deal) => (
+              <a
+                key={deal.id}
+                href={deal.affiliateLink}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="block bg-white/[0.03] hover:bg-white/[0.07] border border-white/[0.06] hover:border-white/[0.12] rounded-2xl overflow-hidden transition-all group"
+              >
+                <div className="flex">
+                  <div className="w-28 h-28 shrink-0 bg-white/[0.02] flex items-center justify-center overflow-hidden">
+                    {deal.productImage ? (
+                      <img src={deal.productImage} alt="" className="w-full h-full object-cover" />
+                    ) : (
+                      <span className="text-2xl opacity-30">📦</span>
+                    )}
+                  </div>
+                  <div className="flex-1 p-3.5 min-w-0 flex flex-col justify-between">
+                    <div>
+                      <div className="flex items-center gap-2 mb-1.5">
+                        <Badge rate={deal.verification.savingsRate} />
+                        <span className="text-[10px] text-white/15">{deal.store}</span>
+                      </div>
+                      <h2 className="font-bold text-[13px] leading-tight truncate group-hover:text-orange-400 transition-colors">
+                        {deal.title}
+                      </h2>
+                    </div>
+                    <div className="flex items-baseline gap-2 mt-1">
+                      <span className="text-[17px] font-black text-emerald-400">
+                        {deal.price.toLocaleString()}원
+                      </span>
+                      <span className="text-[11px] text-white/25 line-through">
+                        {deal.verification.normalPrice.toLocaleString()}원
+                      </span>
+                      <span className="text-[11px] text-orange-400 font-bold ml-auto">
+                        -{deal.verification.savingsRate}%
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </a>
+            ))}
+          </div>
+        )}
+
+        <footer className="text-center py-8 text-white/15 text-[10px] space-y-1">
+          <p>매일줍줍 — 매일 엄선한 최저가 핫딜</p>
+          <p>이 페이지의 링크를 통해 구매 시 소정의 수수료를 받을 수 있습니다</p>
+        </footer>
       </main>
     </div>
   );
