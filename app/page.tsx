@@ -3,7 +3,7 @@ import { crawlPpomppu } from "@/lib/crawlers";
 import { verifyDeals } from "@/lib/verifier";
 import { toAffiliateLink, toCoupangSearchLink } from "@/lib/affiliate";
 
-export const revalidate = 600;
+export const dynamic = "force-dynamic";
 
 async function getDeals(): Promise<(VerifiedDeal & { affiliateLink: string })[]> {
   const raw = await crawlPpomppu(3);

@@ -12,7 +12,7 @@ export async function crawlPpomppu(pages = 1): Promise<HotDeal[]> {
     const url = `https://m.ppomppu.co.kr/new/bbs_list.php?id=ppomppu&page=${page}`;
     let res;
     try {
-      res = await fetch(url, { headers: { "User-Agent": UA }, cache: "no-store" });
+      res = await fetch(url, { headers: { "User-Agent": UA }, next: { revalidate: 600 } });
     } catch (e) {
       console.error("Ppomppu fetch error:", e);
       continue;
