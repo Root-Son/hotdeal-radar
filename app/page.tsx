@@ -1,28 +1,11 @@
 import { VerifiedDeal } from "@/lib/types";
-import { crawlPpomppu } from "@/lib/crawlers";
-import { verifyDeals } from "@/lib/verifier";
+import { fetchCoupangDeals } from "@/lib/coupang-deals";
 import { toAffiliateLink, toCoupangSearchLink } from "@/lib/affiliate";
 
 export const dynamic = "force-dynamic";
 
 async function getDeals(): Promise<(VerifiedDeal & { affiliateLink: string })[]> {
-  const raw = await crawlPpomppu(3);
-  const verified = await verifyDeals(raw, 20);
-
-  // 데모 데이터 보충
-  if (verified.length < 5) {
-    const demos: VerifiedDeal[] = [
-      { id: "demo1", title: "삼성 갤럭시 버즈3 프로", price: 189000, store: "쿠팡", category: "이어폰", link: "", source: "뽐뿌", upvotes: 0, comments: 0, postedAt: "", isSoldOut: false, imageUrl: "https://shopping-phinf.pstatic.net/main_4948498/49484987338.jpg", productLink: "https://www.coupang.com", verification: { type: "time", normalPrice: 299000, currentPrice: 189000, savingsRate: 37, savingsAmount: 110000, priceSource: "타 쇼핑몰 12곳 평균", verdict: "good", verdictLabel: "🔥 최근 30일 최저가" } },
-      { id: "demo2", title: "다이슨 에어랩 멀티 스타일러", price: 549000, store: "쿠팡", category: "가전", link: "", source: "뽐뿌", upvotes: 0, comments: 0, postedAt: "", isSoldOut: false, imageUrl: "https://shopping-phinf.pstatic.net/main_3246498/32464984522.jpg", productLink: "https://www.coupang.com", verification: { type: "space", normalPrice: 699000, currentPrice: 549000, savingsRate: 21, savingsAmount: 150000, priceSource: "타 쇼핑몰 8곳 평균", verdict: "good", verdictLabel: "🔥 최근 30일 최저가" } },
-      { id: "demo3", title: "나이키 에어포스1 '07 화이트", price: 89000, store: "쿠팡", category: "패션", link: "", source: "뽐뿌", upvotes: 0, comments: 0, postedAt: "", isSoldOut: false, imageUrl: "https://shopping-phinf.pstatic.net/main_8636517/86365179065.jpg", productLink: "https://www.coupang.com", verification: { type: "space", normalPrice: 139000, currentPrice: 89000, savingsRate: 36, savingsAmount: 50000, priceSource: "타 쇼핑몰 15곳 평균", verdict: "good", verdictLabel: "🔥 최근 30일 최저가" } },
-      { id: "demo4", title: "곰곰 1등급 무항생제 대란 30구", price: 6980, store: "쿠팡", category: "식품", link: "", source: "뽐뿌", upvotes: 0, comments: 0, postedAt: "", isSoldOut: false, imageUrl: "https://shopping-phinf.pstatic.net/main_8257498/82574988826.jpg", productLink: "https://www.coupang.com", verification: { type: "time", normalPrice: 9980, currentPrice: 6980, savingsRate: 30, savingsAmount: 3000, priceSource: "타 쇼핑몰 6곳 평균", verdict: "good", verdictLabel: "🔥 최근 30일 최저가" } },
-      { id: "demo5", title: "LG 그램 16 16Z90S 노트북", price: 1390000, store: "쿠팡", category: "노트북", link: "", source: "뽐뿌", upvotes: 0, comments: 0, postedAt: "", isSoldOut: false, imageUrl: "https://shopping-phinf.pstatic.net/main_4515826/45158261044.jpg", productLink: "https://www.coupang.com", verification: { type: "time", normalPrice: 1890000, currentPrice: 1390000, savingsRate: 26, savingsAmount: 500000, priceSource: "타 쇼핑몰 9곳 평균", verdict: "good", verdictLabel: "🔥 최근 30일 최저가" } },
-      { id: "demo6", title: "오설록 제주 순수 녹차 100T", price: 12900, store: "쿠팡", category: "식품", link: "", source: "뽐뿌", upvotes: 0, comments: 0, postedAt: "", isSoldOut: false, imageUrl: "https://shopping-phinf.pstatic.net/main_8809817/88098175816.jpg", productLink: "https://www.coupang.com", verification: { type: "space", normalPrice: 19800, currentPrice: 12900, savingsRate: 35, savingsAmount: 6900, priceSource: "타 쇼핑몰 7곳 평균", verdict: "good", verdictLabel: "🔥 최근 30일 최저가" } },
-      { id: "demo7", title: "필립스 소닉케어 전동칫솔 HX3671", price: 29900, store: "쿠팡", category: "생활", link: "", source: "뽐뿌", upvotes: 0, comments: 0, postedAt: "", isSoldOut: false, imageUrl: "https://shopping-phinf.pstatic.net/main_3893201/38932012828.jpg", productLink: "https://www.coupang.com", verification: { type: "time", normalPrice: 49900, currentPrice: 29900, savingsRate: 40, savingsAmount: 20000, priceSource: "타 쇼핑몰 10곳 평균", verdict: "mega", verdictLabel: "🚨 역대 최저가" } },
-    ];
-    const needed = 8 - verified.length;
-    verified.push(...demos.slice(0, needed));
-  }
+  const verified = await fetchCoupangDeals();
 
   return verified.map((deal) => {
     const affiliate = deal.productLink
@@ -107,10 +90,13 @@ export default async function Home() {
                     </div>
                   </div>
 
-                  {/* 화살표 */}
-                  <div className="flex items-center pr-3 text-gray-200 group-hover:text-orange-400 transition-colors">
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </div>
+                {/* 쿠팡 구매 버튼 */}
+                <div className="px-3.5 pb-3">
+                  <div className="flex items-center justify-between bg-blue-50 rounded-xl px-3 py-2">
+                    <span className="text-[11px] text-blue-600 font-bold">쿠팡에서 구매하기</span>
+                    <svg className="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
                     </svg>
                   </div>
                 </div>
@@ -120,9 +106,10 @@ export default async function Home() {
         )}
 
         {/* 푸터 */}
-        <footer className="text-center py-8 text-gray-300 text-[10px] space-y-1">
+        <footer className="text-center py-8 text-gray-300 text-[10px] space-y-2">
           <p>매일줍줍 — 매일 엄선한 최저가 핫딜</p>
-          <p>이 페이지의 링크를 통해 구매 시 소정의 수수료를 받을 수 있습니다</p>
+          <p>이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다</p>
+          <p className="text-gray-200">© 2026 매일줍줍. 쿠팡파트너스 ID: AF6424400</p>
         </footer>
       </main>
     </div>
