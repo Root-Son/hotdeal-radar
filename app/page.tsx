@@ -1,40 +1,26 @@
 import { VerifiedDeal } from "@/lib/types";
 import { crawlPpomppu } from "@/lib/crawlers";
 import { verifyDeals } from "@/lib/verifier";
-import { toAffiliateLink, extractProductUrl } from "@/lib/affiliate";
+import { toAffiliateLink, toCoupangSearchLink } from "@/lib/affiliate";
 
 export const revalidate = 600; // 10분마다 갱신
 
-async function getDeals(): Promise<(VerifiedDeal & { affiliateLink: string; productImage?: string })[]> {
+async function getDeals(): Promise<(VerifiedDeal & { affiliateLink: string })[]> {
   const raw = await crawlPpomppu(2);
+  // verifyDeals가 이제 쿠팡 가격/이미지/링크를 직접 가져옴
   const verified = await verifyDeals(raw, 20);
 
-  const results = [];
-  for (const deal of verified) {
-    let productUrl: string | null = null;
-    try { productUrl = await extractProductUrl(deal.link); } catch {}
-    const affiliate = productUrl ? toAffiliateLink(productUrl) : null;
+  return verified.map((deal) => {
+    // 쿠팡 직링크 → 파트너스 링크 변환
+    const affiliate = deal.productLink
+      ? toAffiliateLink(deal.productLink)
+      : toCoupangSearchLink(deal.title);
 
-    let productImage: string | undefined;
-    try {
-      const cId = process.env.NAVER_CLIENT_ID;
-      const cSec = process.env.NAVER_CLIENT_SECRET;
-      if (cId && cSec) {
-        const q = deal.title.replace(/\([\d,]+원[^)]*\)/g, "").trim().slice(0, 30);
-        const res = await fetch(
-          `https://openapi.naver.com/v1/search/shop.json?query=${encodeURIComponent(q)}&display=1&sort=sim`,
-          { headers: { "X-Naver-Client-Id": cId, "X-Naver-Client-Secret": cSec }, cache: "no-store" }
-        );
-        if (res.ok) {
-          const data = await res.json();
-          productImage = data.items?.[0]?.image || undefined;
-        }
-      }
-    } catch {}
-
-    results.push({ ...deal, affiliateLink: affiliate || productUrl || deal.link, productImage });
-  }
-  return results;
+    return {
+      ...deal,
+      affiliateLink: affiliate || deal.link,
+    };
+  });
 }
 
 function Badge({ rate }: { rate: number }) {
@@ -78,8 +64,8 @@ export default async function Home() {
               >
                 <div className="flex">
                   <div className="w-28 h-28 shrink-0 bg-white/[0.02] flex items-center justify-center overflow-hidden">
-                    {deal.productImage ? (
-                      <img src={deal.productImage} alt="" className="w-full h-full object-cover" />
+                    {deal.imageUrl ? (
+                      <img src={deal.imageUrl} alt="" className="w-full h-full object-cover" />
                     ) : (
                       <span className="text-2xl opacity-30">📦</span>
                     )}
@@ -88,7 +74,7 @@ export default async function Home() {
                     <div>
                       <div className="flex items-center gap-2 mb-1.5">
                         <Badge rate={deal.verification.savingsRate} />
-                        <span className="text-[10px] text-white/15">{deal.store}</span>
+                        <span className="text-[10px] text-white/15">쿠팡</span>
                       </div>
                       <h2 className="font-bold text-[13px] leading-tight truncate group-hover:text-orange-400 transition-colors">
                         {deal.title}

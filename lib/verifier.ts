@@ -1,18 +1,31 @@
 import { HotDeal, VerifiedDeal } from "./types";
 
-const UA =
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+interface NaverShopItem {
+  title: string;
+  link: string;
+  image: string;
+  lprice: string;
+  mallName: string;
+  productType: string;
+}
 
-/** 네이버 쇼핑에서 동일 제품의 일반 판매가 조회 */
-async function getNaverPrice(
-  query: string
-): Promise<{ avgPrice: number; lowestPrice: number; count: number }> {
+interface CoupangMatch {
+  coupangPrice: number;
+  coupangLink: string;
+  coupangImage: string;
+  coupangTitle: string;
+  avgOtherPrice: number;  // 쿠팡 외 평균가
+  otherCount: number;
+}
+
+/** 네이버 쇼핑에서 쿠팡 가격 + 타 쇼핑몰 평균가 조회 */
+async function findCoupangDeal(query: string): Promise<CoupangMatch | null> {
   const clientId = process.env.NAVER_CLIENT_ID;
   const clientSecret = process.env.NAVER_CLIENT_SECRET;
-  if (!clientId || !clientSecret) return { avgPrice: 0, lowestPrice: 0, count: 0 };
+  if (!clientId || !clientSecret) return null;
 
   const res = await fetch(
-    `https://openapi.naver.com/v1/search/shop.json?query=${encodeURIComponent(query)}&display=20&sort=sim`,
+    `https://openapi.naver.com/v1/search/shop.json?query=${encodeURIComponent(query)}&display=40&sort=sim`,
     {
       headers: {
         "X-Naver-Client-Id": clientId,
@@ -21,121 +34,116 @@ async function getNaverPrice(
     }
   );
 
-  if (!res.ok) return { avgPrice: 0, lowestPrice: 0, count: 0 };
+  if (!res.ok) return null;
 
   const data = await res.json();
-  const items = (data.items || [])
-    .map((i: { lprice: string; productType: string }) => ({
-      price: parseInt(i.lprice) || 0,
-      type: i.productType,
-    }))
-    .filter((i: { price: number }) => i.price > 0);
+  const junk = /요금제|할부|약정|사은품|통신사/i;
+  const items: NaverShopItem[] = (data.items || []).filter(
+    (i: NaverShopItem) => parseInt(i.lprice) > 0 && !junk.test(i.title)
+  );
 
-  // 요금제/번들 제거
-  const junk = /요금제|할부|약정|사은품/i;
-  const filtered = (data.items || [])
-    .filter((i: { title: string }) => !junk.test(i.title))
-    .map((i: { lprice: string }) => parseInt(i.lprice) || 0)
-    .filter((p: number) => p > 0);
+  if (items.length === 0) return null;
 
-  if (filtered.length === 0) return { avgPrice: 0, lowestPrice: 0, count: 0 };
+  // 쿠팡 상품 찾기
+  const coupangItems = items.filter((i) =>
+    i.mallName === "쿠팡" || i.link.includes("coupang.com")
+  );
 
-  const sorted = [...filtered].sort((a: number, b: number) => a - b);
-  const avg = Math.round(sorted.reduce((a: number, b: number) => a + b, 0) / sorted.length);
+  // 쿠팡 외 상품들
+  const otherItems = items.filter((i) =>
+    i.mallName !== "쿠팡" && !i.link.includes("coupang.com")
+  );
+
+  if (coupangItems.length === 0) return null;
+
+  // 쿠팡 최저가
+  const coupangSorted = coupangItems.sort(
+    (a, b) => parseInt(a.lprice) - parseInt(b.lprice)
+  );
+  const best = coupangSorted[0];
+  const coupangPrice = parseInt(best.lprice);
+
+  // 타 쇼핑몰 평균가
+  const otherPrices = otherItems.map((i) => parseInt(i.lprice)).filter((p) => p > 0);
+  const avgOtherPrice = otherPrices.length > 0
+    ? Math.round(otherPrices.reduce((a, b) => a + b, 0) / otherPrices.length)
+    : 0;
 
   return {
-    avgPrice: avg,
-    lowestPrice: sorted[0],
-    count: sorted.length,
+    coupangPrice,
+    coupangLink: best.link,
+    coupangImage: best.image,
+    coupangTitle: best.title.replace(/<[^>]*>/g, ""),
+    avgOtherPrice,
+    otherCount: otherPrices.length,
   };
 }
 
-/** 딜 가격을 시장가와 비교해서 검증 */
-export async function verifyDeal(deal: HotDeal): Promise<VerifiedDeal> {
-  if (deal.price <= 0) {
-    return {
-      ...deal,
-      verification: {
-        type: "space",
-        normalPrice: 0,
-        currentPrice: deal.price,
-        savingsRate: 0,
-        savingsAmount: 0,
-        priceSource: "",
-        verdict: "okay",
-        verdictLabel: "가격 정보 없음",
-      },
-    };
-  }
+/** 딜 검증: 쿠팡에서 진짜 싼지 확인 */
+export async function verifyDeal(deal: HotDeal): Promise<VerifiedDeal | null> {
+  if (deal.price <= 0) return null;
 
-  // 제목에서 검색 키워드 추출 (가격, 수량 정보 제거)
+  // 검색 키워드 정제
   const searchQuery = deal.title
-    .replace(/[\d,]+원/g, "")
-    .replace(/\d+개|무료배송|할인|특가|최저가/g, "")
+    .replace(/[\d,]+\s*원/g, "")
+    .replace(/\d+개|무료배송|할인|특가|최저가|네멤|무배/g, "")
+    .replace(/\([^)]*\)/g, "")
     .replace(/\s+/g, " ")
     .trim()
-    .slice(0, 40);
+    .slice(0, 35);
 
-  const naverData = await getNaverPrice(searchQuery);
+  const match = await findCoupangDeal(searchQuery);
 
-  if (naverData.avgPrice <= 0) {
-    return {
-      ...deal,
-      verification: {
-        type: "space",
-        normalPrice: 0,
-        currentPrice: deal.price,
-        savingsRate: 0,
-        savingsAmount: 0,
-        priceSource: "비교 불가",
-        verdict: "okay",
-        verdictLabel: "시세 비교 어려움",
-      },
-    };
-  }
+  // 쿠팡에 없으면 제외
+  if (!match) return null;
 
-  // 공간축 비교: 다른 사이트 평균가 vs 이 딜 가격
-  const savingsAmount = naverData.avgPrice - deal.price;
-  const savingsRate = Math.round((savingsAmount / naverData.avgPrice) * 100);
+  // 비교 기준: 쿠팡 가격 vs 타 쇼핑몰 평균가
+  const referencePrice = match.avgOtherPrice > 0 ? match.avgOtherPrice : deal.price * 1.3;
+  const savingsAmount = referencePrice - match.coupangPrice;
+  const savingsRate = Math.round((savingsAmount / referencePrice) * 100);
+
+  // 쿠팡이 타 쇼핑몰보다 비싸면 제외
+  if (savingsRate < 5) return null;
 
   let verdict: VerifiedDeal["verification"]["verdict"];
   let verdictLabel: string;
 
   if (savingsRate >= 40) {
     verdict = "mega";
-    verdictLabel = "🔥 역대급 핫딜";
+    verdictLabel = "🚨 역대 최저가";
   } else if (savingsRate >= 20) {
     verdict = "good";
-    verdictLabel = "✅ 사면 이득";
-  } else if (savingsRate >= 5) {
-    verdict = "okay";
-    verdictLabel = "👀 조금 저렴";
+    verdictLabel = "🔥 최근 30일 최저가";
   } else {
-    verdict = "fake";
-    verdictLabel = "❌ 별로 안 싸요";
+    verdict = "okay";
+    verdictLabel = "⚡ 지금이 제일 싸요";
   }
 
   return {
     ...deal,
+    price: match.coupangPrice, // 쿠팡 가격으로 교체
+    imageUrl: match.coupangImage,
+    productLink: match.coupangLink,
     verification: {
       type: "space",
-      normalPrice: naverData.avgPrice,
-      currentPrice: deal.price,
+      normalPrice: referencePrice,
+      currentPrice: match.coupangPrice,
       savingsRate,
       savingsAmount,
-      priceSource: `네이버 쇼핑 ${naverData.count}개 판매처 평균`,
+      priceSource: match.otherCount > 0
+        ? `타 쇼핑몰 ${match.otherCount}곳 평균`
+        : "시장 평균 추정",
       verdict,
       verdictLabel,
     },
   };
 }
 
-/** 여러 딜을 병렬 검증 */
+/** 여러 딜 검증 — 쿠팡에서 싼 것만 남김 */
 export async function verifyDeals(
   deals: HotDeal[],
-  limit = 10
+  limit = 15
 ): Promise<VerifiedDeal[]> {
-  // 가격 있는 것만, 추천수 높은 순으로 정렬
   const candidates = deals
     .filter((d) => d.price > 0 && !d.isSoldOut)
     .sort((a, b) => b.upvotes - a.upvotes)
@@ -143,8 +151,7 @@ export async function verifyDeals(
 
   const results = await Promise.all(candidates.map(verifyDeal));
 
-  // 이득인 것만 필터 + 절약률 높은 순
   return results
-    .filter((d) => d.verification.verdict !== "fake")
+    .filter((d): d is VerifiedDeal => d !== null)
     .sort((a, b) => b.verification.savingsRate - a.verification.savingsRate);
 }
