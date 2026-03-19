@@ -1,4 +1,5 @@
 import { HotDeal, VerifiedDeal } from "./types";
+import { saveSnapshot, getPriceHistory, getLowestEver } from "./supabase";
 
 interface NaverShopItem {
   title: string;
@@ -105,13 +106,37 @@ export async function verifyDeal(deal: HotDeal): Promise<VerifiedDeal | null> {
   // 쿠팡이 타 쇼핑몰보다 비싸면 제외
   if (savingsRate < 5) return null;
 
+  // 제품 키 생성 (제목 기반 정규화)
+  const productKey = searchQuery.replace(/\s+/g, "_").toLowerCase();
+
+  // 스냅샷 저장 + 히스토리 조회 (실패해도 계속 진행)
+  let isAllTimeLow = true;
+  let history: { date: string; price: number }[] = [];
+  try {
+    await saveSnapshot({
+      productKey,
+      productName: match.coupangTitle,
+      price: match.coupangPrice,
+      productUrl: match.coupangLink,
+      imageUrl: match.coupangImage,
+    });
+    const lowestEver = await getLowestEver(productKey);
+    isAllTimeLow = lowestEver === null || match.coupangPrice <= lowestEver;
+    history = await getPriceHistory(productKey, 30);
+  } catch {
+    // Supabase 실패해도 딜 자체는 보여줌
+  }
+
   let verdict: VerifiedDeal["verification"]["verdict"];
   let verdictLabel: string;
 
-  if (savingsRate >= 40) {
+  if (isAllTimeLow && savingsRate >= 20) {
     verdict = "mega";
     verdictLabel = "🚨 역대 최저가";
-  } else if (savingsRate >= 20) {
+  } else if (savingsRate >= 30) {
+    verdict = "mega";
+    verdictLabel = "🔥 최근 30일 최저가";
+  } else if (savingsRate >= 15) {
     verdict = "good";
     verdictLabel = "🔥 최근 30일 최저가";
   } else {
@@ -121,11 +146,11 @@ export async function verifyDeal(deal: HotDeal): Promise<VerifiedDeal | null> {
 
   return {
     ...deal,
-    price: match.coupangPrice, // 쿠팡 가격으로 교체
+    price: match.coupangPrice,
     imageUrl: match.coupangImage,
     productLink: match.coupangLink,
     verification: {
-      type: "space",
+      type: isAllTimeLow ? "time" : "space",
       normalPrice: referencePrice,
       currentPrice: match.coupangPrice,
       savingsRate,
@@ -136,6 +161,7 @@ export async function verifyDeal(deal: HotDeal): Promise<VerifiedDeal | null> {
       verdict,
       verdictLabel,
     },
+    priceHistory: history,
   };
 }
 

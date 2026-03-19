@@ -28,6 +28,7 @@ export interface VerifiedDeal extends HotDeal {
     verdictLabel: string;
   };
   affiliateLink?: string;  // 제휴 링크
+  priceHistory?: { date: string; price: number }[]; // 가격 추이
 }
 
 export interface DealContent {
