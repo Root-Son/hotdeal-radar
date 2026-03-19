@@ -104,7 +104,7 @@ export async function verifyDeal(deal: HotDeal): Promise<VerifiedDeal | null> {
   const savingsRate = Math.round((savingsAmount / referencePrice) * 100);
 
   // 쿠팡이 타 쇼핑몰보다 비싸면 제외
-  if (savingsRate < 5) return null;
+  if (savingsRate < 1) return null;
 
   // 제품 키 생성 (제목 기반 정규화)
   const productKey = searchQuery.replace(/\s+/g, "_").toLowerCase();
@@ -175,7 +175,13 @@ export async function verifyDeals(
     .sort((a, b) => b.upvotes - a.upvotes)
     .slice(0, limit);
 
-  const results = await Promise.all(candidates.map(verifyDeal));
+  // 5개씩 병렬 처리 (네이버 API rate limit 고려)
+  const results: (VerifiedDeal | null)[] = [];
+  for (let i = 0; i < candidates.length; i += 5) {
+    const batch = candidates.slice(i, i + 5);
+    const batchResults = await Promise.all(batch.map(verifyDeal));
+    results.push(...batchResults);
+  }
 
   return results
     .filter((d): d is VerifiedDeal => d !== null)
