@@ -21,8 +21,17 @@ function Badge({ rate }: { rate: number }) {
   return <span className="px-2.5 py-1 rounded-full bg-blue-500 text-white text-[11px] font-bold">⚡ 최저가</span>;
 }
 
+const CELEB_PICKS = [
+  { celeb: "장원영", product: "어뮤즈 젤핏 틴트", price: 17000, image: "https://shopping-phinf.pstatic.net/main_8940434/89404340332.1.jpg", video: "https://youtube.com/shorts/DSPB-xGfJvY", query: "어뮤즈 젤핏 틴트" },
+  { celeb: "정국", product: "라네즈 립 글로이 밤 거미베어", price: 12920, image: "https://shopping-phinf.pstatic.net/main_8636517/86365179065.jpg", video: "https://youtube.com/shorts/4eULbsBbSUA", query: "라네즈 립 글로이 밤 거미베어" },
+  { celeb: "제니", product: "옥 페이셜 마사지 롤러", price: 7820, image: "https://shopping-phinf.pstatic.net/main_3893201/38932012828.jpg", video: "https://youtube.com/shorts/Jh3gatzkX-Q", query: "옥 페이셜 마사지 롤러" },
+  { celeb: "태연", product: "마비스 치약", price: 16900, image: "https://shopping-phinf.pstatic.net/main_8809817/88098175816.jpg", video: "https://youtube.com/shorts/xGYAfzmLVAU", query: "마비스 치약" },
+  { celeb: "태연", product: "에르메스 H24 향수", price: 102900, image: "https://shopping-phinf.pstatic.net/main_4515826/45158261044.jpg", video: "https://youtube.com/shorts/OyKh96H-JZg", query: "에르메스 H24 향수" },
+];
+
 export default async function Home() {
   const deals = await getDeals();
+  const pid = "AF6424400";
 
   return (
     <div className="min-h-screen bg-[#f5f5f5]">
@@ -31,22 +40,56 @@ export default async function Home() {
         <div className="max-w-2xl mx-auto px-4 py-4 flex items-center justify-between">
           <div>
             <h1 className="text-xl font-black tracking-tight text-gray-900">매일줍줍</h1>
-            <p className="text-[11px] text-gray-400">안 사면 손해인 것만 모았습니다</p>
+            <p className="text-[11px] text-gray-400">셀럽 추천템 + 최저가 핫딜</p>
           </div>
-          <div className="text-[11px] text-gray-300">
-            {new Date().toLocaleDateString("ko-KR", { month: "long", day: "numeric" })}
-          </div>
+          <a href="https://www.youtube.com/@maeil_jupjup" target="_blank" rel="noopener noreferrer" className="text-[11px] text-red-500 font-bold">YouTube ▸</a>
         </div>
       </header>
 
-      {/* 딜 리스트 */}
       <main className="max-w-2xl mx-auto px-4 py-5">
-        {deals.length === 0 ? (
-          <div className="text-center py-20 text-gray-400">
-            <p className="text-4xl mb-4">🔍</p>
-            <p>핫딜을 수집하고 있어요...</p>
+        {/* 셀럽 추천템 */}
+        <section className="mb-8">
+          <h2 className="text-lg font-black text-gray-900 mb-3">🔥 셀럽 추천템</h2>
+          <div className="space-y-3">
+            {CELEB_PICKS.map((pick) => {
+              const cUrl = `https://www.coupang.com/np/search?q=${encodeURIComponent(pick.query)}`;
+              const affLink = `https://link.coupang.com/re/AFFSDP?lptag=${pid}&subid=celeb&url=${encodeURIComponent(cUrl)}`;
+              return (
+                <div key={pick.celeb + pick.product} className="bg-white border border-gray-100 rounded-2xl overflow-hidden shadow-sm">
+                  <div className="flex">
+                    <div className="w-28 h-28 shrink-0 bg-gray-50 flex items-center justify-center overflow-hidden">
+                      <img src={pick.image} alt="" className="w-full h-full object-cover" />
+                    </div>
+                    <div className="flex-1 p-3.5 min-w-0 flex flex-col justify-between">
+                      <div>
+                        <span className="px-2 py-0.5 rounded-full bg-red-500 text-white text-[10px] font-bold">{pick.celeb} PICK</span>
+                        <h3 className="font-bold text-[13px] leading-tight mt-1.5 text-gray-800">{pick.product}</h3>
+                      </div>
+                      <div className="text-[17px] font-black text-red-500">{pick.price.toLocaleString()}원</div>
+                    </div>
+                  </div>
+                  <div className="flex gap-2 px-3.5 pb-3">
+                    <a href={affLink} target="_blank" rel="noopener noreferrer" className="flex-1 text-center bg-blue-50 hover:bg-blue-100 rounded-xl px-3 py-2 text-[12px] text-blue-600 font-bold transition-colors">
+                      쿠팡에서 구매하기
+                    </a>
+                    <a href={pick.video} target="_blank" rel="noopener noreferrer" className="flex-1 text-center bg-red-50 hover:bg-red-100 rounded-xl px-3 py-2 text-[12px] text-red-500 font-bold transition-colors">
+                      영상 보기
+                    </a>
+                  </div>
+                </div>
+              );
+            })}
           </div>
-        ) : (
+        </section>
+
+        {/* 핫딜 리스트 */}
+        <section>
+          <h2 className="text-lg font-black text-gray-900 mb-3">⚡ 오늘의 핫딜</h2>
+          {deals.length === 0 ? (
+            <div className="text-center py-10 text-gray-400">
+              <p>핫딜을 수집하고 있어요...</p>
+            </div>
+          ) : (
           <div className="space-y-3">
             {deals.map((deal) => (
               <a
@@ -103,7 +146,8 @@ export default async function Home() {
               </a>
             ))}
           </div>
-        )}
+          )}
+        </section>
 
         {/* 푸터 */}
         <footer className="text-center py-8 text-gray-500 text-xs space-y-2">
