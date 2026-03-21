@@ -332,7 +332,7 @@ async function main() {
 
     <!-- 하단 CTA -->
     <rect x="190" y="1480" width="700" height="70" rx="35" fill="#E53935" opacity="0.95"/>
-    <text x="540" y="1527" text-anchor="middle" font-size="32" font-weight="900" fill="white" font-family="sans-serif">👇 고정댓글에서 바로 구매</text>
+    <text x="540" y="1527" text-anchor="middle" font-size="32" font-weight="900" fill="white" font-family="sans-serif">👆 프로필 링크에서 구매</text>
   </svg>`;
   const overlayPng = path.join(dir, "persistent_overlay.png");
   await sharp(Buffer.from(overlaySvg)).png().toFile(overlayPng);

@@ -58,7 +58,7 @@ export default async function Home() {
                 <div key={pick.celeb + pick.product} className="bg-white border border-gray-100 rounded-2xl overflow-hidden shadow-sm">
                   <div className="flex">
                     <div className="w-28 h-28 shrink-0 bg-gray-50 flex items-center justify-center overflow-hidden">
-                      <img src={pick.image} alt="" className="w-full h-full object-cover" />
+                      <img src={`/api/img?url=${encodeURIComponent(pick.image)}`} alt="" className="w-full h-full object-cover" />
                     </div>
                     <div className="flex-1 p-3.5 min-w-0 flex flex-col justify-between">
                       <div>
@@ -103,7 +103,7 @@ export default async function Home() {
                   {/* 제품 이미지 */}
                   <div className="w-28 h-28 shrink-0 bg-gray-50 flex items-center justify-center overflow-hidden">
                     {deal.imageUrl ? (
-                      <img src={deal.imageUrl} alt="" className="w-full h-full object-cover" />
+                      <img src={`/api/img?url=${encodeURIComponent(deal.imageUrl!)}`} alt="" className="w-full h-full object-cover" />
                     ) : (
                       <span className="text-2xl opacity-30">📦</span>
                     )}
