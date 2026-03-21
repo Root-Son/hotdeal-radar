@@ -33,39 +33,125 @@ function run(cmd: string): void {
   execSync(cmd, { stdio: "pipe" });
 }
 
-// ─── 유튜브 다운로드 + 클립 ───
+// ─── 자막 (타임스탬프 포함) ───
 
-function downloadAndClip(url: string, dir: string, count = 5): { clips: string[]; srcPath: string } {
+interface SubEntry {
+  start: number; // 초
+  text: string;
+}
+
+function parseVttTimestamp(ts: string): number {
+  const parts = ts.split(":");
+  if (parts.length === 3) return parseFloat(parts[0]) * 3600 + parseFloat(parts[1]) * 60 + parseFloat(parts[2]);
+  if (parts.length === 2) return parseFloat(parts[0]) * 60 + parseFloat(parts[1]);
+  return parseFloat(parts[0]);
+}
+
+function downloadSubs(url: string): { entries: SubEntry[]; fullText: string } {
+  try {
+    // 기존 파일 정리
+    execSync("rm -f /tmp/csub*.vtt", { stdio: "pipe" });
+    run(`yt-dlp --write-auto-sub --sub-lang ko --skip-download --sub-format vtt -o "/tmp/csub" "${url}" --no-warnings 2>&1`);
+    const files = execSync("ls /tmp/csub*.vtt 2>/dev/null || true").toString().trim().split("\n").filter(Boolean);
+
+    for (const f of files) {
+      const raw = fs.readFileSync(f, "utf-8");
+      const lines = raw.split("\n");
+      const entries: SubEntry[] = [];
+      let currentTime = 0;
+
+      for (let i = 0; i < lines.length; i++) {
+        const timeMatch = lines[i].match(/^(\d{2}:\d{2}[\d:.]+)\s*-->/);
+        if (timeMatch) {
+          currentTime = parseVttTimestamp(timeMatch[1]);
+          // 다음 줄이 텍스트
+          const textLines: string[] = [];
+          for (let j = i + 1; j < lines.length && lines[j].trim() !== "" && !lines[j].match(/-->/); j++) {
+            const clean = lines[j].replace(/<[^>]*>/g, "").trim();
+            if (clean && !clean.match(/^(WEBVTT|Kind:|Language:)/)) textLines.push(clean);
+          }
+          if (textLines.length > 0) {
+            entries.push({ start: currentTime, text: textLines.join(" ") });
+          }
+        }
+      }
+
+      try { fs.unlinkSync(f); } catch {}
+      const fullText = entries.map(e => e.text).join(" ").replace(/\s+/g, " ").slice(0, 3000);
+      return { entries, fullText };
+    }
+  } catch {}
+  return { entries: [], fullText: "" };
+}
+
+// ─── 유튜브 다운로드 + 제품 관련 클립 추출 ───
+
+function downloadVideo(url: string, dir: string): { srcPath: string; duration: number } {
   const src = path.join(dir, "source.mp4");
   run(`yt-dlp -f "best[height<=720]" -o "${src}" "${url}" --no-warnings`);
   const dur = parseFloat(execSync(`ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${src}"`).toString().trim());
-
-  const clips: string[] = [];
-  for (let i = 0; i < count; i++) {
-    const t = Math.max(0, Math.round(dur * (0.1 + (i * 0.75) / (count - 1))));
-    const p = path.join(dir, `raw_${i}.mp4`);
-    run(`ffmpeg -y -ss ${t} -i "${src}" -t 5 -vf "crop=ih*9/16:ih,scale=${W}:${H}" ${VIDEO} ${AUDIO} "${p}"`);
-    clips.push(p);
-  }
-  return { clips, srcPath: src };
+  return { srcPath: src, duration: dur };
 }
 
-// ─── 자막 ───
+function extractClips(srcPath: string, timestamps: number[], dir: string, duration: number): string[] {
+  const clips: string[] = [];
+  for (let i = 0; i < timestamps.length; i++) {
+    const t = Math.max(0, Math.min(timestamps[i], duration - 6));
+    const p = path.join(dir, `raw_${i}.mp4`);
+    run(`ffmpeg -y -ss ${t} -i "${srcPath}" -t 5 -vf "crop=ih*9/16:ih,scale=${W}:${H}" ${VIDEO} ${AUDIO} "${p}"`);
+    clips.push(p);
+  }
+  return clips;
+}
 
-function getSubs(url: string): string {
-  try {
-    run(`yt-dlp --write-auto-sub --sub-lang ko --skip-download --sub-format vtt -o "/tmp/csub" "${url}" --no-warnings 2>&1`);
-    const files = execSync("ls /tmp/csub*.vtt 2>/dev/null || true").toString().trim().split("\n").filter(Boolean);
-    for (const f of files) {
-      const text = fs.readFileSync(f, "utf-8").split("\n")
-        .filter(l => !l.match(/^(\d|WEBVTT|NOTE|-->|\s*$)/) && !l.startsWith("Kind:") && !l.startsWith("Language:"))
-        .map(l => l.replace(/<[^>]*>/g, "").trim()).filter(Boolean)
-        .join(" ").replace(/\s+/g, " ").slice(0, 3000);
-      try { fs.unlinkSync(f); } catch {}
-      return text;
+function findProductTimestamps(entries: SubEntry[], productName: string, count: number, duration: number): number[] {
+  // 제품 관련 키워드
+  const keywords = productName.toLowerCase().split(/\s+/).filter(w => w.length >= 2);
+
+  // 자막에서 제품 언급 구간 찾기
+  const matches: { start: number; score: number }[] = [];
+  for (const entry of entries) {
+    const text = entry.text.toLowerCase();
+    const score = keywords.filter(kw => text.includes(kw)).length;
+    if (score > 0) {
+      matches.push({ start: entry.start, score });
     }
-  } catch {}
-  return "";
+  }
+
+  // 근접한 매칭들을 하나의 구간으로 합침 (20초 이내 = 같은 구간)
+  const groups: { start: number; bestScore: number }[] = [];
+  const sortedByTime = [...matches].sort((a, b) => a.start - b.start);
+  for (const m of sortedByTime) {
+    const existing = groups.find(g => Math.abs(g.start - m.start) < 20);
+    if (existing) {
+      if (m.score > existing.bestScore) {
+        existing.start = m.start;
+        existing.bestScore = m.score;
+      }
+    } else {
+      groups.push({ start: m.start, bestScore: m.score });
+    }
+  }
+
+  // 점수 높은 순
+  groups.sort((a, b) => b.bestScore - a.bestScore);
+  const selected = groups.slice(0, count).map(g => g.start);
+
+  if (selected.length >= count) {
+    return selected;
+  }
+
+  // 매칭 부족하면 그룹핑된 것 + 균등 분할로 보충
+  const found = [...selected];
+  while (found.length < count) {
+    const t = Math.round(duration * (0.15 + (found.length * 0.7) / count));
+    if (found.every(s => Math.abs(s - t) > 20)) {
+      found.push(t);
+    } else {
+      found.push(t + 20);
+    }
+  }
+  return found.slice(0, count);
 }
 
 // ─── Gemini ───
@@ -216,15 +302,15 @@ async function main() {
   const dir = path.resolve("output", `celeb_${celebName}_${Date.now()}`);
   fs.mkdirSync(dir, { recursive: true });
 
-  // 1. 다운로드 + 클립
-  console.log("🎬 영상 클립 추출...");
-  const { clips: rawClips, srcPath } = downloadAndClip(url, dir, 5);
-  console.log(`  ✅ ${rawClips.length}개 클립`);
+  // 1. 영상 다운로드
+  console.log("🎬 영상 다운로드...");
+  const { srcPath, duration } = downloadVideo(url, dir);
+  console.log(`  ✅ ${Math.round(duration)}초`);
 
-  // 2. 자막
+  // 2. 자막 추출 (타임스탬프 포함)
   console.log("📝 자막 추출...");
-  const subs = getSubs(url);
-  console.log(`  ${subs ? `✅ ${subs.length}자` : "⬜ 없음"}`);
+  const { entries: subEntries, fullText: subs } = downloadSubs(url);
+  console.log(`  ${subs ? `✅ ${subEntries.length}개 구간, ${subs.length}자` : "⬜ 없음"}`);
 
   // 3. AI 분석
   console.log("🤖 AI 분석...");
@@ -242,11 +328,18 @@ async function main() {
   }
   console.log(`  ✅ ${prod.title.slice(0, 30)} — ${prod.price.toLocaleString()}원 (이미지 ${prodImgs.length}장)`);
 
-  // 5. 조립
+  // 5. 제품 관련 구간에서 클립 추출
+  console.log("✂️ 제품 관련 구간 클립 추출...");
+  const timestamps = findProductTimestamps(subEntries, productName, 5, duration);
+  console.log(`  타임스탬프: ${timestamps.map(t => Math.round(t) + "초").join(", ")}`);
+  const rawClips = extractClips(srcPath, timestamps, dir, duration);
+  console.log(`  ✅ ${rawClips.length}개 클립`);
+
+  // 6. 조립
   console.log("🔗 조립...");
   const finals: string[] = [];
 
-  // 5-1. 후킹 — 원본 음성 그대로 + 자막
+  // 6-1. 후킹 — 원본 음성 그대로 + 자막
   const hookOut = path.join(dir, "f_hook.mp4");
   await overlayOnClip(rawClips[0], hookOut, `
     <rect x="60" y="1100" width="960" height="120" rx="20" fill="black" opacity="0.75"/>

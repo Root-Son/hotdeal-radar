@@ -22,11 +22,11 @@ function Badge({ rate }: { rate: number }) {
 }
 
 const CELEB_PICKS = [
-  { celeb: "장원영", product: "어뮤즈 젤핏 틴트", price: 17000, image: "https://shopping-phinf.pstatic.net/main_8940434/89404340332.1.jpg", video: "https://youtube.com/shorts/DSPB-xGfJvY", query: "어뮤즈 젤핏 틴트" },
-  { celeb: "정국", product: "라네즈 립 글로이 밤 거미베어", price: 12920, image: "https://shopping-phinf.pstatic.net/main_8636517/86365179065.jpg", video: "https://youtube.com/shorts/4eULbsBbSUA", query: "라네즈 립 글로이 밤 거미베어" },
-  { celeb: "제니", product: "옥 페이셜 마사지 롤러", price: 7820, image: "https://shopping-phinf.pstatic.net/main_3893201/38932012828.jpg", video: "https://youtube.com/shorts/Jh3gatzkX-Q", query: "옥 페이셜 마사지 롤러" },
-  { celeb: "태연", product: "마비스 치약", price: 16900, image: "https://shopping-phinf.pstatic.net/main_8809817/88098175816.jpg", video: "https://youtube.com/shorts/xGYAfzmLVAU", query: "마비스 치약" },
-  { celeb: "태연", product: "에르메스 H24 향수", price: 102900, image: "https://shopping-phinf.pstatic.net/main_4515826/45158261044.jpg", video: "https://youtube.com/shorts/OyKh96H-JZg", query: "에르메스 H24 향수" },
+  { celeb: "장원영", product: "어뮤즈 젤핏 틴트", price: 17000, image: "https://shopping-phinf.pstatic.net/main_8940434/89404340332.1.jpg", video: "https://youtube.com/shorts/WlMUem4lwFU", query: "어뮤즈 젤핏 틴트" },
+  { celeb: "정국", product: "라네즈 립 글로이 밤 거미베어", price: 12920, image: "https://shopping-phinf.pstatic.net/main_8636517/86365179065.jpg", video: "https://youtube.com/shorts/TfflcZ8pVwk", query: "라네즈 립 글로이 밤 거미베어" },
+  { celeb: "제니", product: "옥 페이셜 마사지 롤러", price: 7820, image: "https://shopping-phinf.pstatic.net/main_3893201/38932012828.jpg", video: "https://youtube.com/shorts/EAM88zVKGlo", query: "옥 페이셜 마사지 롤러" },
+  { celeb: "태연", product: "마비스 치약", price: 16900, image: "https://shopping-phinf.pstatic.net/main_8809817/88098175816.jpg", video: "https://youtube.com/shorts/6GMhyE2dDkw", query: "마비스 치약" },
+  { celeb: "태연", product: "에르메스 H24 향수", price: 102900, image: "https://shopping-phinf.pstatic.net/main_4515826/45158261044.jpg", video: "https://youtube.com/shorts/tjRRugK_N0A", query: "에르메스 H24 향수" },
 ];
 
 export default async function Home() {
