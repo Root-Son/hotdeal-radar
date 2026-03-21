@@ -71,7 +71,7 @@ export default async function Home() {
                     <div>
                       <div className="flex items-center gap-2 mb-1.5">
                         <Badge rate={deal.verification.savingsRate} />
-                        <span className="text-[10px] text-gray-300">쿠팡</span>
+                        <span className="text-[11px] text-blue-500 font-medium">쿠팡</span>
                       </div>
                       <h2 className="font-bold text-[13px] leading-tight truncate text-gray-800 group-hover:text-orange-500 transition-colors">
                         {deal.title}
@@ -106,10 +106,10 @@ export default async function Home() {
         )}
 
         {/* 푸터 */}
-        <footer className="text-center py-8 text-gray-300 text-[10px] space-y-2">
-          <p>매일줍줍 — 매일 엄선한 최저가 핫딜</p>
+        <footer className="text-center py-8 text-gray-500 text-xs space-y-2">
+          <p className="font-medium text-gray-600">매일줍줍 — 매일 엄선한 최저가 핫딜</p>
           <p>이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다</p>
-          <p className="text-gray-200">© 2026 매일줍줍. 쿠팡파트너스 ID: AF6424400</p>
+          <p>© 2026 매일줍줍 · 쿠팡파트너스 ID: AF6424400</p>
         </footer>
       </main>
     </div>

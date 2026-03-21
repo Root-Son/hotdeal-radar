@@ -1,12 +1,12 @@
 /**
- * 연예인픽 숏폼 영상 생성
+ * 연예인픽 숏폼 v4
  *
  * Usage: npx tsx src/celeb-video.ts "유튜브URL" "제품명" "연예인명"
  *
- * 구조:
- * 1. 후킹 (3초) — 방송 캡쳐 + "XXX이 극찬한 이 제품!"
- * 2. 제품 소개 (8초) — 제품 이미지 + 설명
- * 3. CTA (2초) — "고정댓글에서 구매"
+ * 1. 후킹 (5초) — 원본 클립 + 자막
+ * 2. 코멘트 클립들 (각 5초) — 원본 클립 + TTS 나레이션으로 제품 설명
+ * 3. 제품 사진 슬라이드 (각 4초) — 여러 장 + 가격/할인 정보
+ * 4. CTA (2초) — "고정댓글 링크" 짧게
  */
 
 import "dotenv/config";
@@ -15,418 +15,352 @@ import { execSync } from "child_process";
 import fs from "fs";
 import path from "path";
 
-const WIDTH = 1080;
-const HEIGHT = 1920;
-const OUTPUT_DIR = path.resolve("output");
+const W = 1080;
+const H = 1920;
+const AUDIO = "-c:a aac -b:a 128k -ar 44100 -ac 2";
+const VIDEO = "-c:v libx264 -preset fast -crf 23 -pix_fmt yuv420p -r 30 -g 30";
 
-function escapeXml(s: string): string {
+function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
-function generateTTS(text: string, outputPath: string): void {
-  const escaped = text.replace(/"/g, '\\"').replace(/!/g, ".").replace(/\?/g, ".");
-  execSync(
-    `edge-tts --voice ko-KR-SunHiNeural --rate=+10% --text "${escaped}" --write-media "${outputPath}"`,
-    { stdio: "pipe" }
-  );
+function tts(text: string, out: string): void {
+  const t = text.replace(/"/g, '\\"').replace(/[!?]/g, ".");
+  execSync(`edge-tts --voice ko-KR-SunHiNeural --rate=+10% --text "${t}" --write-media "${out}"`, { stdio: "pipe" });
 }
 
-// ─── 1. 유튜브에서 캡쳐 추출 ───
+function run(cmd: string): void {
+  execSync(cmd, { stdio: "pipe" });
+}
 
-function extractScreenshots(youtubeUrl: string, workDir: string): string[] {
-  // 영상 다운로드 (720p)
-  const videoPath = path.join(workDir, "source.mp4");
-  execSync(
-    `yt-dlp -f "best[height<=720]" -o "${videoPath}" "${youtubeUrl}" --no-warnings`,
-    { stdio: "pipe" }
-  );
+// ─── 유튜브 다운로드 + 클립 ───
 
-  // 영상 길이 확인
-  const durationStr = execSync(
-    `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${videoPath}"`
-  ).toString().trim();
-  const duration = parseFloat(durationStr);
+function downloadAndClip(url: string, dir: string, count = 5): { clips: string[]; srcPath: string } {
+  const src = path.join(dir, "source.mp4");
+  run(`yt-dlp -f "best[height<=720]" -o "${src}" "${url}" --no-warnings`);
+  const dur = parseFloat(execSync(`ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${src}"`).toString().trim());
 
-  // 3등분 지점에서 캡쳐 (초반, 중반에서 2장)
-  const timestamps = [
-    Math.round(duration * 0.2),
-    Math.round(duration * 0.5),
-  ];
-
-  const screenshots: string[] = [];
-  for (let i = 0; i < timestamps.length; i++) {
-    const ssPath = path.join(workDir, `screenshot_${i}.jpg`);
-    execSync(
-      `ffmpeg -y -ss ${timestamps[i]} -i "${videoPath}" -vframes 1 -q:v 2 "${ssPath}"`,
-      { stdio: "pipe" }
-    );
-    // 세로 비율로 크롭
-    execSync(
-      `ffmpeg -y -i "${ssPath}" -vf "crop=ih*9/16:ih,scale=${WIDTH}:${HEIGHT}" "${ssPath}.tmp.jpg"`,
-      { stdio: "pipe" }
-    );
-    fs.renameSync(`${ssPath}.tmp.jpg`, ssPath);
-    screenshots.push(ssPath);
+  const clips: string[] = [];
+  for (let i = 0; i < count; i++) {
+    const t = Math.max(0, Math.round(dur * (0.1 + (i * 0.75) / (count - 1))));
+    const p = path.join(dir, `raw_${i}.mp4`);
+    run(`ffmpeg -y -ss ${t} -i "${src}" -t 5 -vf "crop=ih*9/16:ih,scale=${W}:${H}" ${VIDEO} ${AUDIO} "${p}"`);
+    clips.push(p);
   }
-
-  // 원본 삭제 (용량)
-  fs.unlinkSync(videoPath);
-
-  return screenshots;
+  return { clips, srcPath: src };
 }
 
-// ─── 2. 유튜브 자막 추출 ───
+// ─── 자막 ───
 
-function extractSubtitles(youtubeUrl: string): string {
+function getSubs(url: string): string {
   try {
-    // 자동 자막 포함해서 한국어 자막 추출
-    const result = execSync(
-      `yt-dlp --write-auto-sub --sub-lang ko --skip-download --sub-format vtt -o "/tmp/celeb_sub" "${youtubeUrl}" --no-warnings 2>&1`,
-      { stdio: "pipe" }
-    ).toString();
-
-    // vtt 파일 찾기
-    const vttFiles = ["/tmp/celeb_sub.ko.vtt", "/tmp/celeb_sub.ko.vtt"];
-    for (const vttPath of vttFiles) {
-      if (fs.existsSync(vttPath)) {
-        const vtt = fs.readFileSync(vttPath, "utf-8");
-        // VTT에서 텍스트만 추출 (타임스탬프, 태그 제거)
-        const text = vtt
-          .split("\n")
-          .filter(line => !line.match(/^(\d|WEBVTT|NOTE|-->|\s*$)/) && !line.startsWith("Kind:") && !line.startsWith("Language:"))
-          .map(line => line.replace(/<[^>]*>/g, "").trim())
-          .filter(Boolean)
-          .join(" ")
-          .replace(/\s+/g, " ")
-          .slice(0, 2000); // 2000자 제한
-        fs.unlinkSync(vttPath);
-        return text;
-      }
-    }
-
-    // glob으로 찾기
-    const files = execSync("ls /tmp/celeb_sub*.vtt 2>/dev/null || true").toString().trim().split("\n").filter(Boolean);
+    run(`yt-dlp --write-auto-sub --sub-lang ko --skip-download --sub-format vtt -o "/tmp/csub" "${url}" --no-warnings 2>&1`);
+    const files = execSync("ls /tmp/csub*.vtt 2>/dev/null || true").toString().trim().split("\n").filter(Boolean);
     for (const f of files) {
-      const vtt = fs.readFileSync(f, "utf-8");
-      const text = vtt
-        .split("\n")
-        .filter(line => !line.match(/^(\d|WEBVTT|NOTE|-->|\s*$)/))
-        .map(line => line.replace(/<[^>]*>/g, "").trim())
-        .filter(Boolean)
-        .join(" ")
-        .replace(/\s+/g, " ")
-        .slice(0, 2000);
-      fs.unlinkSync(f);
+      const text = fs.readFileSync(f, "utf-8").split("\n")
+        .filter(l => !l.match(/^(\d|WEBVTT|NOTE|-->|\s*$)/) && !l.startsWith("Kind:") && !l.startsWith("Language:"))
+        .map(l => l.replace(/<[^>]*>/g, "").trim()).filter(Boolean)
+        .join(" ").replace(/\s+/g, " ").slice(0, 3000);
+      try { fs.unlinkSync(f); } catch {}
       return text;
     }
   } catch {}
   return "";
 }
 
-// ─── 3. 제품 정보 조회 (네이버 + Gemini) ───
+// ─── Gemini ───
 
-interface ProductInfo {
-  title: string;
-  price: number;
-  image: string;
-  description: string;
-  coupangLink: string;
-  celebQuote: string;
+interface Analysis {
+  hookLine: string;
+  commentTts: string[]; // 코멘트 클립 위에 읽을 나레이션 3개
+  commentSubs: string[]; // 화면에 보여줄 자막 3개
+  productTts: string;
+  features: string[];
 }
 
-async function getProductInfo(productName: string, celebName: string, subtitles: string): Promise<ProductInfo> {
-  const clientId = process.env.NAVER_CLIENT_ID!;
-  const clientSecret = process.env.NAVER_CLIENT_SECRET!;
-  const partnerId = process.env.COUPANG_PARTNER_ID || "AF6424400";
+async function gemini(celeb: string, product: string, subs: string): Promise<Analysis> {
+  const fb: Analysis = {
+    hookLine: `${celeb} 추천템!`,
+    commentTts: [`${celeb}이 이 제품 진짜 좋다고 했거든요`, `매일 쓰는 애정템이래요`, `이건 한번 써보면 못 끊는대요`],
+    commentSubs: ["진짜 좋아!", "매일 쓰는 애정템", "못 끊어..."],
+    productTts: `${celeb}이 추천한 ${product}. 지금 쿠팡에서 확인해보세요.`,
+    features: ["프리미엄 퀄리티", "매일 쓰기 좋은 제품"],
+  };
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) return fb;
+  try {
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: `유튜브 숏폼 나레이션. "${celeb}"이(가) "${product}" 추천 영상.
 
-  // 네이버 쇼핑 검색
-  const res = await fetch(
-    `https://openapi.naver.com/v1/search/shop.json?query=${encodeURIComponent(productName)}&display=5&sort=sim`,
-    {
-      headers: {
-        "X-Naver-Client-Id": clientId,
-        "X-Naver-Client-Secret": clientSecret,
-      },
-    }
-  );
-
-  let price = 0;
-  let image = "";
-  let naverTitle = productName;
-
-  if (res.ok) {
-    const data = await res.json();
-    const item = data.items?.[0];
-    if (item) {
-      price = parseInt(item.lprice) || 0;
-      image = item.image || "";
-      naverTitle = item.title.replace(/<[^>]*>/g, "");
-    }
-  }
-
-  // 쿠팡 검색 파트너스 링크
-  const coupangSearchUrl = `https://www.coupang.com/np/search?component=&q=${encodeURIComponent(productName)}`;
-  const coupangLink = `https://link.coupang.com/re/AFFSDP?lptag=${partnerId}&subid=celeb&url=${encodeURIComponent(coupangSearchUrl)}`;
-
-  // Gemini로 제품 설명 생성
-  let description = "";
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (apiKey) {
-    try {
-      const geminiRes = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: `${celebName}이/가 추천한 "${productName}" 숏폼 나레이션을 만들어줘.
-
-${subtitles ? `[영상 자막 내용]\n${subtitles.slice(0, 1000)}\n` : ""}
+[자막] ${subs.slice(0, 1500)}
 
 [규칙]
-1. 자막에서 ${celebName}이 이 제품에 대해 뭐라고 했는지 핵심만 뽑아서 인용해줘 (예: "${celebName} 왈: '이거 없으면 못 살아'")
-2. 그 다음 제품의 핵심 특징/장점 1~2개
-3. 총 3~4줄, 쇼츠 나레이션용이라 짧고 흥분되게
-4. 자막이 없거나 제품 언급이 없으면 일반적인 제품 소개로` }] }],
-            generationConfig: { maxOutputTokens: 8192, temperature: 0.7 },
-          }),
-        }
-      );
-      if (geminiRes.ok) {
-        const geminiData = await geminiRes.json();
-        description = geminiData.candidates?.[0]?.content?.parts?.find((p: { text?: string }) => p.text)?.text || "";
-      }
-    } catch {}
-  }
+- 반드시 "${celeb}" 이름을 hookLine에 포함!
+- "~왈" "~의 필수템" 같은 뻔한 표현 금지
+- 흥분해서 친구한테 소개하는 느낌. 과장 OK
+- 한국어 조사를 정확히! "${celeb}" 이름 끝 글자 받침 확인해서 이/가, 은/는, 을/를 맞춰. 예: "제니가"(O) "제니이"(X), "정국이"(O) "정국이이"(X), "태연이"(O)
+- commentTts의 처음 1개는 "${celeb}"이 왜 이걸 좋아하는지, 나머지 2개는 제품 설명
 
-  if (!description) {
-    description = `${celebName}이 직접 추천한 ${productName}! 지금 바로 확인해보세요.`;
-  }
-
-  // 설명에서 인용구 추출 (""안의 내용)
-  const quoteMatch = description.match(/[""'']([^""'']{5,50})[""'']/);
-  const celebQuote = quoteMatch ? quoteMatch[1] : "";
-
-  return { title: naverTitle, price, image, description, coupangLink, celebQuote };
+JSON:
+{
+  "hookLine": "첫 화면 자막. 반드시 ${celeb} 이름 포함! 15~22자. 호기심+감탄 자극. 예: '${celeb}이 홀딱 반한 이 립밤!', '${celeb} 10년째 쓰는 향수 정체', '${celeb}이 난리 난 이 치약!'",
+  "commentTts": ["나레이션 3개. 첫 번째는 ${celeb}이 왜 좋아하는지 (25~40자). 나머지는 제품 매력 소개. 예: '${celeb}이 촬영장에서도 매일 바른대요 이거', '발색이 진짜 미쳤거든요 한번 보세요', '만원대인데 이 퀄리티 실화냐고요'"],
+  "commentSubs": ["화면 자막 3개. 10~15자. 임팩트. 예: '촬영장에서도 매일!', '발색 미쳤다!!', '만원대 실화?!'"],
+  "productTts": "제품 사진 나올 때 나레이션. 30~60자. 가격 꼭 말하고 놀라는 톤. 예: '이게 만삼천원이에요 진짜 미쳤죠'",
+  "features": ["제품 장점 2~3개. 예: '24시간 촉촉 지속', '자극 없는 순한 성분'"]
+}` }] }],
+        generationConfig: { maxOutputTokens: 8192, temperature: 0.7 },
+      }),
+    });
+    if (!res.ok) return fb;
+    const data = await res.json();
+    const text = data.candidates?.[0]?.content?.parts?.find((p: { text?: string }) => p.text)?.text || "";
+    const m = text.match(/\{[\s\S]*\}/);
+    if (!m) return fb;
+    const p = JSON.parse(m[0]);
+    return {
+      hookLine: p.hookLine || fb.hookLine,
+      commentTts: p.commentTts?.length >= 3 ? p.commentTts : fb.commentTts,
+      commentSubs: p.commentSubs?.length >= 3 ? p.commentSubs : fb.commentSubs,
+      productTts: p.productTts || fb.productTts,
+      features: p.features?.length > 0 ? p.features : fb.features,
+    };
+  } catch { return fb; }
 }
 
-// ─── 3. 카드 이미지 생성 ───
+// ─── 제품 정보 ───
 
-async function createHookCard(screenshotPath: string, celebName: string, productName: string): Promise<Buffer> {
-  // 캡쳐 위에 텍스트 오버레이
-  const imgBuf = fs.readFileSync(screenshotPath);
-  const base = await sharp(imgBuf).resize(WIDTH, HEIGHT, { fit: "cover" }).png().toBuffer();
-
-  const svg = `
-    <svg width="${WIDTH}" height="${HEIGHT}" xmlns="http://www.w3.org/2000/svg">
-      <defs>
-        <linearGradient id="hookFade" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stop-color="rgba(0,0,0,0.6)"/>
-          <stop offset="30%" stop-color="rgba(0,0,0,0)"/>
-          <stop offset="60%" stop-color="rgba(0,0,0,0)"/>
-          <stop offset="100%" stop-color="rgba(0,0,0,0.8)"/>
-        </linearGradient>
-      </defs>
-      <rect width="${WIDTH}" height="${HEIGHT}" fill="url(#hookFade)"/>
-
-      <!-- 상단 배지 -->
-      <rect x="300" y="120" width="480" height="60" rx="30" fill="rgba(255,0,0,0.9)"/>
-      <text x="540" y="162" text-anchor="middle" font-size="30" font-weight="900" fill="white" font-family="sans-serif">연예인 PICK</text>
-
-      <!-- 하단 텍스트 -->
-      <text x="540" y="1650" text-anchor="middle" font-size="55" font-weight="900" fill="white" font-family="sans-serif">${escapeXml(celebName)}이 극찬한</text>
-      <text x="540" y="1740" text-anchor="middle" font-size="65" font-weight="900" fill="#FFD54F" font-family="sans-serif">${escapeXml(productName.slice(0, 15))}</text>
-      <text x="540" y="1830" text-anchor="middle" font-size="35" fill="rgba(255,255,255,0.7)" font-family="sans-serif">이거 뭔데? 어디서 사?</text>
-    </svg>`;
-
-  return sharp(base)
-    .composite([{ input: Buffer.from(svg), top: 0, left: 0 }])
-    .png()
-    .toBuffer();
+async function productInfo(name: string) {
+  const cId = process.env.NAVER_CLIENT_ID!, cSec = process.env.NAVER_CLIENT_SECRET!;
+  const res = await fetch(`https://openapi.naver.com/v1/search/shop.json?query=${encodeURIComponent(name)}&display=5&sort=sim`,
+    { headers: { "X-Naver-Client-Id": cId, "X-Naver-Client-Secret": cSec } });
+  if (!res.ok) return { images: [] as string[], price: 0, title: name };
+  const data = await res.json();
+  const items = (data.items || []).filter((i: { image: string }) => i.image);
+  return {
+    images: items.slice(0, 3).map((i: { image: string }) => i.image),
+    price: parseInt(items[0]?.lprice) || 0,
+    title: items[0]?.title?.replace(/<[^>]*>/g, "") || name,
+  };
 }
 
-async function createProductCard(product: ProductInfo): Promise<Buffer> {
-  // 제품 이미지 다운로드
-  let productImgBuf: Buffer | null = null;
-  if (product.image) {
-    try {
-      const res = await fetch(product.image);
-      if (res.ok) {
-        productImgBuf = Buffer.from(await res.arrayBuffer());
-        productImgBuf = await sharp(productImgBuf)
-          .resize(600, 600, { fit: "contain", background: { r: 255, g: 255, b: 255, alpha: 1 } })
-          .png()
-          .toBuffer();
-      }
-    } catch {}
-  }
-
-  // 배경
-  const base = sharp({
-    create: { width: WIDTH, height: HEIGHT, channels: 4, background: { r: 255, g: 255, b: 255, alpha: 1 } },
-  });
-
-  const descLines: string[] = [];
-  let line = "";
-  for (const char of product.description.split("\n")[0].slice(0, 80)) {
-    line += char;
-    if (line.length >= 18) { descLines.push(line); line = ""; }
-  }
-  if (line) descLines.push(line);
-
-  const descSvg = descLines
-    .map((l, i) => `<text x="540" y="${1250 + i * 50}" text-anchor="middle" font-size="32" fill="#444" font-family="sans-serif">${escapeXml(l)}</text>`)
-    .join("");
-
-  const svg = `
-    <svg width="${WIDTH}" height="${HEIGHT}" xmlns="http://www.w3.org/2000/svg">
-      <rect width="${WIDTH}" height="${HEIGHT}" fill="white"/>
-
-      <!-- 연예인 코멘트 -->
-      ${product.celebQuote ? `
-        <rect x="100" y="700" width="860" height="100" rx="20" fill="#FFF3E0"/>
-        <text x="540" y="740" text-anchor="middle" font-size="28" fill="#E65100" font-family="sans-serif" font-style="italic">"${escapeXml(product.celebQuote.slice(0, 30))}"</text>
-        <text x="540" y="780" text-anchor="middle" font-size="22" fill="#BF360C" font-family="sans-serif">— 본인 직접 언급</text>
-      ` : ""}
-
-      <!-- 제목 -->
-      <text x="540" y="${product.celebQuote ? 880 : 750}" text-anchor="middle" font-size="45" font-weight="900" fill="#111" font-family="sans-serif">${escapeXml(product.title.slice(0, 22))}</text>
-
-      <!-- 가격 -->
-      ${product.price > 0 ? `
-        <text x="540" y="${product.celebQuote ? 970 : 850}" text-anchor="middle" font-size="70" font-weight="900" fill="#E53935" font-family="sans-serif">${product.price.toLocaleString()}원</text>
-      ` : ""}
-
-      <!-- 설명 -->
-      ${descSvg}
-
-      <!-- 하단 CTA -->
-      <rect x="240" y="1700" width="600" height="80" rx="40" fill="#E53935"/>
-      <text x="540" y="1752" text-anchor="middle" font-size="35" font-weight="bold" fill="white" font-family="sans-serif">쿠팡에서 최저가 확인하기</text>
-    </svg>`;
-
-  let result = await base.png().toBuffer();
-
-  const composites: sharp.OverlayOptions[] = [
-    { input: Buffer.from(svg), top: 0, left: 0 },
-  ];
-
-  if (productImgBuf) {
-    composites.unshift({ input: productImgBuf, top: 80, left: 240 });
-  }
-
-  result = await sharp(result).composite(composites).png().toBuffer();
-  return result;
+async function dlImg(url: string, out: string): Promise<boolean> {
+  try {
+    const res = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0", Referer: "https://google.com" } });
+    if (!res.ok) return false;
+    await sharp(Buffer.from(await res.arrayBuffer())).resize(600, 600, { fit: "contain", background: { r: 245, g: 245, b: 245, alpha: 1 } }).toFile(out);
+    return true;
+  } catch { return false; }
 }
 
-async function createCtaCard(): Promise<Buffer> {
-  const svg = `
-    <svg width="${WIDTH}" height="${HEIGHT}" xmlns="http://www.w3.org/2000/svg">
-      <rect width="${WIDTH}" height="${HEIGHT}" fill="#E53935"/>
-      <text x="540" y="850" text-anchor="middle" font-size="60" font-weight="900" fill="white" font-family="sans-serif">구매 링크는</text>
-      <text x="540" y="950" text-anchor="middle" font-size="60" font-weight="900" fill="white" font-family="sans-serif">고정댓글에!</text>
-      <text x="540" y="1100" text-anchor="middle" font-size="80" fill="white" font-family="sans-serif">👇</text>
-      <text x="540" y="1250" text-anchor="middle" font-size="35" fill="rgba(255,255,255,0.7)" font-family="sans-serif">팔로우하면 매일 연예인 추천템 알림!</text>
-    </svg>`;
-  return sharp(Buffer.from(svg)).png().toBuffer();
+// ─── 오버레이 PNG 만들어서 영상에 합성 ───
+
+async function overlayOnClip(clip: string, out: string, svgContent: string): Promise<void> {
+  const pngPath = out.replace(".mp4", "_ov.png");
+  await sharp(Buffer.from(`<svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg">${svgContent}</svg>`)).png().toFile(pngPath);
+  run(`ffmpeg -y -i "${clip}" -i "${pngPath}" -filter_complex "overlay=0:0" ${VIDEO} ${AUDIO} "${out}"`);
+}
+
+// ─── 영상 클립에 TTS 오디오 교체 (원본 음소거 + TTS) ───
+
+function replaceAudioWithTts(clip: string, ttsPath: string, out: string): void {
+  const ttsDur = parseFloat(execSync(`ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${ttsPath}"`).toString().trim());
+  const clipDur = parseFloat(execSync(`ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${clip}"`).toString().trim());
+
+  if (ttsDur > clipDur) {
+    // TTS가 길면 클립 루프
+    run(`ffmpeg -y -stream_loop -1 -i "${clip}" -i "${ttsPath}" -map 0:v -map 1:a ${VIDEO} ${AUDIO} -shortest "${out}"`);
+  } else {
+    run(`ffmpeg -y -i "${clip}" -i "${ttsPath}" -map 0:v -map 1:a ${VIDEO} ${AUDIO} -shortest "${out}"`);
+  }
+}
+
+// ─── 제품 사진 슬라이드 카드 ───
+
+async function productSlide(imgPath: string | null, title: string, price: number, features: string[], isLast: boolean): Promise<Buffer> {
+  const hasImg = imgPath && fs.existsSync(imgPath);
+  const featSvg = features.slice(0, 2).map((f, i) =>
+    `<rect x="140" y="${1100 + i * 70}" width="800" height="55" rx="12" fill="#F0F0F0"/>
+     <text x="540" y="${1135 + i * 70}" text-anchor="middle" font-size="26" fill="#333" font-family="sans-serif">✅ ${esc(f.slice(0, 28))}</text>`
+  ).join("");
+
+  const svg = `<svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg">
+    ${!hasImg ? `<rect width="${W}" height="700" fill="#f5f5f5"/>` : ""}
+    <rect y="680" width="${W}" height="${H - 680}" fill="white"/>
+    <text x="540" y="800" text-anchor="middle" font-size="40" font-weight="900" fill="#111" font-family="sans-serif">${esc(title.slice(0, 24))}</text>
+    ${price > 0 ? `<text x="540" y="900" text-anchor="middle" font-size="65" font-weight="900" fill="#E53935" font-family="sans-serif">${price.toLocaleString()}원</text>` : ""}
+    <rect x="440" y="970" width="200" height="3" rx="1" fill="#E53935"/>
+    <text x="540" y="1050" text-anchor="middle" font-size="26" fill="#999" font-family="sans-serif">이런 점이 좋아요</text>
+    ${featSvg}
+    ${""/* CTA는 상시 오버레이에서 처리 */}
+  </svg>`;
+
+  const base = await sharp({ create: { width: W, height: H, channels: 4, background: { r: 255, g: 255, b: 255, alpha: 1 } } }).png().toBuffer();
+  const composites: sharp.OverlayOptions[] = [];
+  if (hasImg) {
+    const imgBuf = await sharp(fs.readFileSync(imgPath!)).resize(550, 550, { fit: "contain", background: { r: 245, g: 245, b: 245, alpha: 1 } }).png().toBuffer();
+    composites.push({ input: imgBuf, top: 70, left: 265 });
+  }
+  composites.push({ input: Buffer.from(svg), top: 0, left: 0 });
+  return sharp(base).composite(composites).png().toBuffer();
 }
 
 // ─── 메인 ───
 
 async function main() {
-  const [,, youtubeUrl, productName, celebName] = process.argv;
+  const [,, url, productName, celebName] = process.argv;
+  if (!url || !productName || !celebName) { console.log('Usage: npx tsx src/celeb-video.ts "URL" "제품명" "연예인"'); process.exit(1); }
 
-  if (!youtubeUrl || !productName || !celebName) {
-    console.log('Usage: npx tsx src/celeb-video.ts "유튜브URL" "제품명" "연예인명"');
-    process.exit(1);
+  const dir = path.resolve("output", `celeb_${celebName}_${Date.now()}`);
+  fs.mkdirSync(dir, { recursive: true });
+
+  // 1. 다운로드 + 클립
+  console.log("🎬 영상 클립 추출...");
+  const { clips: rawClips, srcPath } = downloadAndClip(url, dir, 5);
+  console.log(`  ✅ ${rawClips.length}개 클립`);
+
+  // 2. 자막
+  console.log("📝 자막 추출...");
+  const subs = getSubs(url);
+  console.log(`  ${subs ? `✅ ${subs.length}자` : "⬜ 없음"}`);
+
+  // 3. AI 분석
+  console.log("🤖 AI 분석...");
+  const ai = await gemini(celebName, productName, subs);
+  console.log(`  ✅ "${ai.hookLine}"`);
+  ai.commentSubs.forEach(s => console.log(`  💬 "${s}"`));
+
+  // 4. 제품 정보 + 이미지
+  console.log("🛍️ 제품 정보...");
+  const prod = await productInfo(productName);
+  const prodImgs: string[] = [];
+  for (let i = 0; i < prod.images.length; i++) {
+    const p = path.join(dir, `prod_${i}.jpg`);
+    if (await dlImg(prod.images[i], p)) prodImgs.push(p);
   }
+  console.log(`  ✅ ${prod.title.slice(0, 30)} — ${prod.price.toLocaleString()}원 (이미지 ${prodImgs.length}장)`);
 
-  const workDir = path.join(OUTPUT_DIR, `celeb_${celebName}_${Date.now()}`);
-  fs.mkdirSync(workDir, { recursive: true });
+  // 5. 조립
+  console.log("🔗 조립...");
+  const finals: string[] = [];
 
-  // 1. 유튜브 캡쳐 추출
-  console.log("📸 유튜브 캡쳐 추출 중...");
-  const screenshots = extractScreenshots(youtubeUrl, workDir);
-  console.log(`  ✅ ${screenshots.length}장 캡쳐 완료`);
+  // 5-1. 후킹 — 원본 음성 그대로 + 자막
+  const hookOut = path.join(dir, "f_hook.mp4");
+  await overlayOnClip(rawClips[0], hookOut, `
+    <rect x="60" y="1100" width="960" height="120" rx="20" fill="black" opacity="0.75"/>
+    <text x="540" y="1180" text-anchor="middle" font-size="55" font-weight="900" fill="white" font-family="sans-serif">${esc(ai.hookLine.slice(0, 20))}</text>
+  `);
+  finals.push(hookOut);
 
-  // 2. 자막 추출
-  console.log("📝 자막 추출 중...");
-  const subtitles = extractSubtitles(youtubeUrl);
-  console.log(`  ${subtitles ? `✅ ${subtitles.length}자 추출` : "⬜ 자막 없음 (일반 소개로 대체)"}`);
+  // 5-2. 코멘트 클립들
+  for (let i = 0; i < Math.min(ai.commentTts.length, 3); i++) {
+    const ci = 1 + (i % (rawClips.length - 1));
+    const withSub = path.join(dir, `f_comment_sub_${i}.mp4`);
+    await overlayOnClip(rawClips[ci], withSub, `
+      <rect x="60" y="1150" width="960" height="80" rx="15" fill="black" opacity="0.7"/>
+      <text x="540" y="1205" text-anchor="middle" font-size="42" font-weight="bold" fill="white" font-family="sans-serif">${esc(ai.commentSubs[i])}</text>
+    `);
 
-  // 3. 제품 정보 + AI 분석
-  console.log("🔍 제품 정보 조회 중...");
-  const product = await getProductInfo(productName, celebName, subtitles);
-  console.log(`  ✅ ${product.title} — ${product.price.toLocaleString()}원`);
-
-  // 3. 카드 이미지 생성
-  console.log("🎨 카드 생성 중...");
-  const clips: string[] = [];
-
-  // 후킹 카드 (캡쳐 이미지 + 연예인 이름)
-  for (let i = 0; i < screenshots.length; i++) {
-    const cardImg = path.join(workDir, `hook_${i}.png`);
-    fs.writeFileSync(cardImg, await createHookCard(screenshots[i], celebName, productName));
-    const cardTts = path.join(workDir, `hook_${i}.mp3`);
     if (i === 0) {
-      generateTTS(`${celebName}이 극찬한 이 제품! 뭔지 아세요?`, cardTts);
+      // 첫 번째 코멘트: 원본 음성 유지 (연예인 목소리 들려야 함)
+      finals.push(withSub);
     } else {
-      generateTTS(`바로 이거예요!`, cardTts);
+      // 나머지: TTS 나레이션으로 제품 설명
+      const ttsFile = path.join(dir, `tts_comment_${i}.mp3`);
+      tts(ai.commentTts[i], ttsFile);
+      const finalComment = path.join(dir, `f_comment_${i}.mp4`);
+      replaceAudioWithTts(withSub, ttsFile, finalComment);
+      finals.push(finalComment);
     }
-    const clipPath = path.join(workDir, `clip_hook_${i}.mp4`);
-    execSync(`ffmpeg -y -loop 1 -i "${cardImg}" -i "${cardTts}" -c:v libx264 -tune stillimage -c:a aac -b:a 192k -pix_fmt yuv420p -shortest -vf "scale=${WIDTH}:${HEIGHT}" "${clipPath}"`, { stdio: "pipe" });
-    clips.push(clipPath);
   }
 
-  // 제품 소개 카드
-  const productImg = path.join(workDir, "product.png");
-  fs.writeFileSync(productImg, await createProductCard(product));
-  const productTts = path.join(workDir, "product.mp3");
-  generateTTS(product.description.split("\n").slice(0, 2).join(" ").slice(0, 120), productTts);
-  const productClip = path.join(workDir, "clip_product.mp4");
-  execSync(`ffmpeg -y -loop 1 -i "${productImg}" -i "${productTts}" -c:v libx264 -tune stillimage -c:a aac -b:a 192k -pix_fmt yuv420p -shortest -vf "scale=${WIDTH}:${HEIGHT}" "${productClip}"`, { stdio: "pipe" });
-  clips.push(productClip);
+  // 5-3. 제품 사진 슬라이드 — 이미지 여러 장을 하나의 영상으로 + TTS
+  const prodTtsFile = path.join(dir, "tts_prod.mp3");
+  tts(ai.productTts, prodTtsFile);
+  const ttsDur = parseFloat(execSync(`ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${prodTtsFile}"`).toString().trim());
 
-  // CTA 카드
-  const ctaImg = path.join(workDir, "cta.png");
-  fs.writeFileSync(ctaImg, await createCtaCard());
-  const ctaTts = path.join(workDir, "cta.mp3");
-  generateTTS("구매 링크는 고정댓글에 있어요. 팔로우 하면 매일 알려드릴게요!", ctaTts);
-  const ctaClip = path.join(workDir, "clip_cta.mp4");
-  execSync(`ffmpeg -y -loop 1 -i "${ctaImg}" -i "${ctaTts}" -c:v libx264 -tune stillimage -c:a aac -b:a 192k -pix_fmt yuv420p -shortest -vf "scale=${WIDTH}:${HEIGHT}" "${ctaClip}"`, { stdio: "pipe" });
-  clips.push(ctaClip);
+  // 이미지 카드 생성 (마지막 장에 CTA 포함)
+  const imgCount = Math.max(1, prodImgs.length);
+  for (let i = 0; i < imgCount; i++) {
+    const isLast = i === imgCount - 1;
+    const cardImg = path.join(dir, `prodcard_${i}.png`);
+    fs.writeFileSync(cardImg, await productSlide(prodImgs[i] || null, prod.title, prod.price, ai.features, isLast));
+  }
 
-  // 4. 합치기
-  console.log("🔗 클립 합치기...");
-  const concatFile = path.join(workDir, "concat.txt");
-  fs.writeFileSync(concatFile, clips.map((p) => `file '${p}'`).join("\n"));
-  const finalPath = path.join(workDir, "celeb_shorts.mp4");
-  execSync(`ffmpeg -y -f concat -safe 0 -i "${concatFile}" -c copy "${finalPath}"`, { stdio: "pipe" });
+  // 첫 번째 이미지 + TTS로 메인 제품 클립
+  const prodFinal = path.join(dir, "f_prod.mp4");
+  run(`ffmpeg -y -loop 1 -i "${path.join(dir, "prodcard_0.png")}" -i "${prodTtsFile}" -vf "scale=${W}:${H},fps=30" ${VIDEO} ${AUDIO} -shortest "${prodFinal}"`);
+  finals.push(prodFinal);
 
-  // Downloads에도 복사
-  const downloadName = `celeb_${celebName}_${productName.replace(/\s/g, "_")}.mp4`;
-  const downloadPath = path.join(process.env.HOME || "~", "Downloads", downloadName);
-  fs.copyFileSync(finalPath, downloadPath);
+  // 나머지 이미지들은 각각 짧은 TTS
+  for (let i = 1; i < imgCount; i++) {
+    const extraTts = path.join(dir, `tts_extra_${i}.mp3`);
+    tts(i === imgCount - 1 ? "고정댓글에서 바로 구매하세요." : "이것도 확인해보세요.", extraTts);
+    const extraClip = path.join(dir, `f_prod_${i}.mp4`);
+    run(`ffmpeg -y -loop 1 -i "${path.join(dir, `prodcard_${i}.png`)}" -i "${extraTts}" -vf "scale=${W}:${H},fps=30" ${VIDEO} ${AUDIO} -shortest "${extraClip}"`);
+    finals.push(extraClip);
+  }
 
-  // 5. 영상 설명 생성
-  const desc = [
-    `${celebName}이 극찬한 ${productName}!`,
-    "",
-    `📌 구매 링크 (쿠팡 최저가):`,
-    product.coupangLink,
-    "",
-    `#${celebName} #${productName.replace(/\s/g, "")} #연예인추천 #추천템 #매일줍줍`,
-  ].join("\n");
-  const descPath = path.join(workDir, "description.txt");
-  fs.writeFileSync(descPath, desc);
+  // 6. 합치기
+  const concatFile = path.join(dir, "concat.txt");
+  fs.writeFileSync(concatFile, finals.map(p => `file '${p}'`).join("\n"));
+  const concatPath = path.join(dir, "concat_raw.mp4");
+  run(`ffmpeg -y -f concat -safe 0 -i "${concatFile}" ${VIDEO} ${AUDIO} "${concatPath}"`);
 
-  // 결과
-  const duration = execSync(`ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${finalPath}"`).toString().trim();
-  console.log(`\n🎉 영상 생성 완료!`);
-  console.log(`📁 ${downloadPath}`);
-  console.log(`⏱ ${Math.round(parseFloat(duration))}초`);
-  console.log(`🔗 쿠팡 링크: ${product.coupangLink.slice(0, 60)}...`);
-  console.log(`📝 설명: ${descPath}`);
+  // 7. 상시 오버레이 — 상단 타이틀 (굵직하게) + 하단 CTA
+  // hookLine을 2줄로 분할
+  const hookWords = ai.hookLine.slice(0, 24);
+  const midIdx = Math.ceil(hookWords.length / 2);
+  const hookL1 = hookWords.slice(0, midIdx);
+  const hookL2 = hookWords.slice(midIdx);
+
+  const overlaySvg = `<svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg">
+    <!-- 상단 타이틀 배경 -->
+    <defs>
+      <linearGradient id="topGrad" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="black" stop-opacity="0.85"/>
+        <stop offset="100%" stop-color="black" stop-opacity="0"/>
+      </linearGradient>
+    </defs>
+    <rect x="0" y="0" width="${W}" height="250" fill="url(#topGrad)"/>
+
+    <!-- 타이틀 텍스트 (2줄, 크고 굵게) -->
+    <text x="540" y="95" text-anchor="middle" font-size="62" font-weight="900" fill="white" font-family="sans-serif">${esc(hookL1)}</text>
+    <text x="540" y="175" text-anchor="middle" font-size="62" font-weight="900" fill="#FFD54F" font-family="sans-serif">${esc(hookL2)}</text>
+
+    <!-- 하단 CTA -->
+    <rect x="190" y="1480" width="700" height="70" rx="35" fill="#E53935" opacity="0.95"/>
+    <text x="540" y="1527" text-anchor="middle" font-size="32" font-weight="900" fill="white" font-family="sans-serif">👇 고정댓글에서 바로 구매</text>
+  </svg>`;
+  const overlayPng = path.join(dir, "persistent_overlay.png");
+  await sharp(Buffer.from(overlaySvg)).png().toFile(overlayPng);
+
+  const finalPath = path.join(dir, "shorts.mp4");
+  run(`ffmpeg -y -i "${concatPath}" -i "${overlayPng}" -filter_complex "overlay=0:0" ${VIDEO} ${AUDIO} "${finalPath}"`);
+
+  // 원본 삭제
+  try { fs.unlinkSync(srcPath); } catch {}
+
+  // Downloads
+  const dlName = `celeb_${celebName}_${productName.replace(/\s/g, "_")}.mp4`;
+  const dlPath = path.join(process.env.HOME || "~", "Downloads", dlName);
+  fs.copyFileSync(finalPath, dlPath);
+
+  // 설명
+  const pid = process.env.COUPANG_PARTNER_ID || "AF6424400";
+  const cUrl = `https://www.coupang.com/np/search?q=${encodeURIComponent(productName)}`;
+  const affLink = `https://link.coupang.com/re/AFFSDP?lptag=${pid}&subid=celeb&url=${encodeURIComponent(cUrl)}`;
+  const desc = [`${celebName} 추천 ${productName} 🔥`, "", ...ai.commentSubs.map(s => `💬 "${s}"`), "",
+    `📌 구매 링크:`, affLink, "",
+    `이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다.`, "",
+    `#${celebName} #${productName.replace(/\s/g, "")} #추천템 #매일줍줍`].join("\n");
+  fs.writeFileSync(path.join(dir, "description.txt"), desc);
+
+  const d = execSync(`ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${finalPath}"`).toString().trim();
+  console.log(`\n🎉 완성! ${Math.round(parseFloat(d))}초`);
+  console.log(`📁 ${dlPath}`);
 }
 
 main().catch(console.error);
