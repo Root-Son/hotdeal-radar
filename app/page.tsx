@@ -22,11 +22,11 @@ function Badge({ rate }: { rate: number }) {
 }
 
 const CELEB_PICKS = [
-  { celeb: "장원영", product: "어뮤즈 젤핏 틴트", price: 17000, image: "https://shopping-phinf.pstatic.net/main_8940434/89404340332.1.jpg", video: "https://youtube.com/shorts/WlMUem4lwFU", query: "어뮤즈 젤핏 틴트" },
-  { celeb: "정국", product: "라네즈 립 글로이 밤 거미베어", price: 12920, image: "https://shopping-phinf.pstatic.net/main_8636517/86365179065.jpg", video: "https://youtube.com/shorts/TfflcZ8pVwk", query: "라네즈 립 글로이 밤 거미베어" },
-  { celeb: "제니", product: "옥 페이셜 마사지 롤러", price: 7820, image: "https://shopping-phinf.pstatic.net/main_3893201/38932012828.jpg", video: "https://youtube.com/shorts/EAM88zVKGlo", query: "옥 페이셜 마사지 롤러" },
-  { celeb: "태연", product: "마비스 치약", price: 16900, image: "https://shopping-phinf.pstatic.net/main_8809817/88098175816.jpg", video: "https://youtube.com/shorts/6GMhyE2dDkw", query: "마비스 치약" },
-  { celeb: "태연", product: "에르메스 H24 향수", price: 102900, image: "https://shopping-phinf.pstatic.net/main_4515826/45158261044.jpg", video: "https://youtube.com/shorts/tjRRugK_N0A", query: "에르메스 H24 향수" },
+  { celeb: "장원영", product: "어뮤즈 젤핏 틴트", price: 17000, image: "https://shopping-phinf.pstatic.net/main_8940434/89404340332.1.jpg", video: "https://youtube.com/shorts/WlMUem4lwFU", affLink: "https://link.coupang.com/a/d84ko0" },
+  { celeb: "정국", product: "라네즈 립 글로이 밤 거미베어", price: 12920, image: "https://shopping-phinf.pstatic.net/main_8636517/86365179065.jpg", video: "https://youtube.com/shorts/TfflcZ8pVwk", affLink: "https://link.coupang.com/a/d84qGQ" },
+  { celeb: "제니", product: "옥 페이셜 마사지 롤러", price: 7820, image: "https://shopping-phinf.pstatic.net/main_3893201/38932012828.jpg", video: "https://youtube.com/shorts/EAM88zVKGlo", affLink: "https://link.coupang.com/a/d84sqm" },
+  { celeb: "태연", product: "마비스 치약", price: 16900, image: "https://shopping-phinf.pstatic.net/main_8809817/88098175816.jpg", video: "https://youtube.com/shorts/6GMhyE2dDkw", affLink: "https://link.coupang.com/a/d84tIS" },
+  { celeb: "태연", product: "에르메스 H24 향수", price: 102900, image: "https://shopping-phinf.pstatic.net/main_4515826/45158261044.jpg", video: "https://youtube.com/shorts/tjRRugK_N0A", affLink: "https://link.coupang.com/a/d84vR6" },
 ];
 
 export default async function Home() {
@@ -52,8 +52,6 @@ export default async function Home() {
           <h2 className="text-lg font-black text-gray-900 mb-3">🔥 셀럽 추천템</h2>
           <div className="space-y-3">
             {CELEB_PICKS.map((pick) => {
-              const cUrl = `https://www.coupang.com/np/search?q=${encodeURIComponent(pick.query)}`;
-              const affLink = `https://link.coupang.com/re/AFFSDP?lptag=${pid}&subid=celeb&url=${encodeURIComponent(cUrl)}`;
               return (
                 <div key={pick.celeb + pick.product} className="bg-white border border-gray-100 rounded-2xl overflow-hidden shadow-sm">
                   <div className="flex">
@@ -69,7 +67,7 @@ export default async function Home() {
                     </div>
                   </div>
                   <div className="flex gap-2 px-3.5 pb-3">
-                    <a href={affLink} target="_blank" rel="noopener noreferrer" className="flex-1 text-center bg-blue-50 hover:bg-blue-100 rounded-xl px-3 py-2 text-[12px] text-blue-600 font-bold transition-colors">
+                    <a href={pick.affLink} target="_blank" rel="noopener noreferrer" className="flex-1 text-center bg-blue-50 hover:bg-blue-100 rounded-xl px-3 py-2 text-[12px] text-blue-600 font-bold transition-colors">
                       쿠팡에서 구매하기
                     </a>
                     <a href={pick.video} target="_blank" rel="noopener noreferrer" className="flex-1 text-center bg-red-50 hover:bg-red-100 rounded-xl px-3 py-2 text-[12px] text-red-500 font-bold transition-colors">
